@@ -1,0 +1,20 @@
+[
+  {
+    "ID": "80e3aa96-815d-4683-980c-16db42eab0ef",
+    "description": "Customer reporting high latency on the links between Beta-Node-03 and Gamma-Aegis-01. Pings are successful but RTT is over 200ms.",
+    "topology": "Beta-Node-03 [Eth1/1] <--> [Eth1/10] Gamma-Aegis-01",
+    "alarms": "Interface Eth1/1 on Beta-Node-03 reporting high output errors. Utilization at 98%.",
+    "problem": "Minimize latency between Beta-Node-03 and the Alpha-Hedgehog core.",
+    "nodes": ["Beta-Node-03", "Gamma-Aegis-01", "Delta-Proxy-02", "Alpha-Hedgehog"],
+    "status": "Link Beta-03->Gamma-01 is congested."
+  },
+  {
+    "ID": "f55a819f-3fb9-4c8f-8859-a5b1649ff2d5",
+    "description": "BGP session down between Edge-R1 and Core-Sw5. Neighbor relationship stuck in Idle state.",
+    "topology": "Edge-R1 [Eth2/1] --- [Eth1/5] Core-Sw5",
+    "alarms": "BGP-3-NOTIFICATION: sent to neighbor 10.0.0.1 4/0 (hold time expired)",
+    "problem": "Restore BGP connectivity and ensure redundant path via Edge-R2.",
+    "nodes": ["Edge-R1", "Edge-R2", "Core-Sw5", "Core-Sw6"],
+    "status": "BGP Down. 10.0.0.1 unreachable."
+  }
+]

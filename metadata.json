@@ -1,0 +1,6 @@
+{
+  "name": "Telco Troubleshooting Agentic Challenge",
+  "description": "An AI-powered agent to troubleshoot and optimize telecom networks for the ITU/Zindi challenge.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["AI-powered troubleshooting", "Network analysis"]
+}
