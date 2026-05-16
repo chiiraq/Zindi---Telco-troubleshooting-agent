@@ -44,6 +44,7 @@ function cn(...inputs: ClassValue[]) {
 // --- Types ---
 interface Scenario {
   ID: string;
+  scenario_id?: string;
   description: string;
   topology: string;
   alarms: string;
@@ -79,84 +80,134 @@ export default function App() {
   const [logs, setLogs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'agent' | 'visualizer'>('dashboard');
   
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
 
-  // Mock initial load of scenarios
+  // Initial load
   useEffect(() => {
     fetch('/test.json')
       .then(res => res.json())
-      .then(data => setScenarios(data))
-      .catch(() => {
-        // Fallback if file not found yet
-        setScenarios([
-          {
-            ID: "80e3aa96-815d-4683-980c-16db42eab0ef",
-            description: "High latency on Beta-Node-03 links.",
-            topology: "Beta-Node-03 [Eth1/1] <--> [Eth1/10] Gamma-Aegis-01",
-            alarms: "Interface Eth1/1 reporting 98% utilization.",
-          }
-        ]);
-      });
+      .then(data => {
+        const formatted = Array.isArray(data) ? data : [data];
+        setScenarios(formatted);
+      })
+      .catch(() => setScenarios([]));
   }, []);
 
-  const addLog = (msg: string) => {
-    setLogs(prev => [...prev.slice(-49), `${new Date().toLocaleTimeString()} - ${msg}`]);
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    let allScenarios: Scenario[] = [...scenarios];
+
+    Array.from(files).forEach((file: any) => {
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        try {
+          const json = JSON.parse(event.target?.result as string);
+          const data = Array.isArray(json) ? json : [json];
+          
+          setScenarios(prev => {
+            const newBatch = [...prev];
+            data.forEach((newS: any) => {
+              const id = newS.ID || newS.scenario_id;
+              const index = newBatch.findIndex(s => (s.ID || s.scenario_id) === id);
+              if (index > -1) {
+                newBatch[index] = { ...newBatch[index], ...newS };
+              } else {
+                newBatch.push(newS);
+              }
+            });
+            return Array.from(new Map(newBatch.map(s => [s.ID || s.scenario_id, s])).values());
+          });
+
+          addLog(`Imported ${data.length} entries from ${file.name}.`);
+          setResults([]); 
+          setStatus('idle');
+        } catch (err) {
+          addLog(`[ERROR] Failed to parse ${file.name}: ${err}`);
+        }
+      };
+      reader.readAsText(file);
+    });
   };
 
-  const solveScenario = async (scenario: Scenario) => {
-    addLog(`Processing Scenario ${scenario.ID}...`);
+  const addLog = (msg: string) => {
+    setLogs(prev => [...prev.slice(-99), `${new Date().toLocaleTimeString()} - ${msg}`]);
+  };
+
+  const solveScenario = async (scenario: Scenario, attempt = 1): Promise<Result> => {
+    const sid = scenario.ID || scenario.scenario_id;
+    if (!sid) return { ID: 'unknown', "Track A": "C7", "Track B": "N/A", reasoning: "Missing ID" };
+
+    if (attempt === 1) addLog(`Reasoning for ${sid.slice(0,8)}...`);
     
     try {
       const prompt = `
-        Analyze this Telco Network Scenario:
+        You are a World-Class Telco Network Troubleshooting & Optimization Agent.
+        Your goal is to win the ITU/Zindi Agentic Challenge by providing perfect diagnosis and optimal paths.
+        
+        CONTEXT:
         Description: ${scenario.description}
         Topology: ${scenario.topology}
         Alarms: ${scenario.alarms}
+        Problem: ${scenario.problem || 'Identify root cause and best fix.'}
+        Nodes: ${scenario.nodes?.join(', ') || 'Auto-detect from topology'}
         
-        Track A Categories:
-        C1: Physical, C2: Configure, C3: Protocol, C4: Performance, C5: ACL, C6: Infrastructure, C7: Other
+        RULES FOR TRACK A (DIAGNOSIS):
+        - C1: Physical/Hardware (SFP, Fiber, Cable, Low Light)
+        - C2: Config (Shutdown, MTU, VLAN, Speed/Duplex)
+        - C3: Protocol (BGP, OSPF, IS-IS, Static routes, Neighbor states)
+        - C4: Congestion (High utilization, CPU, Buffers, Packet drops)
+        - C5: Security (ACL, Firewall, Policy)
+        - C6: Node/Power (Total node loss, Power supply)
+        - C7: Other
         
-        Respond in JSON format:
+        RULES FOR TRACK B (OPTIMIZATION):
+        - Provide the optimal node path or mitigation action.
+        - Example: NodeA->NodeC->NodeD or Fix(Interface X)
+        
+        OUTPUT FORMAT (Strictly JSON):
         {
-          "track_a": "C[1-7]",
-          "track_b": "A short optimization path string (e.g. NodeA->NodeB)",
-          "reasoning": "A brief explanation"
+          "diagnosis_code": "C1-C7",
+          "optimization_path": "String (Winning solution for Track B)",
+          "expert_reasoning": "Internal monologue explaining the choice"
         }
       `;
 
       const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
+        model: "gemini-1.5-flash", 
         contents: prompt,
         config: {
           responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              track_a: { type: Type.STRING },
-              track_b: { type: Type.STRING },
-              reasoning: { type: Type.STRING }
-            },
-            required: ["track_a", "track_b", "reasoning"]
-          }
         }
       });
 
-      const data = JSON.parse(response.text || '{}');
-      addLog(`[GEMINI] Diagnostics: ${data.track_a} | Optimization: ${data.track_b}`);
-      
+      const text = response.text || "{}";
+      const data = JSON.parse(text);
       return {
-        ID: scenario.ID,
-        "Track A": data.track_a,
-        "Track B": data.track_b,
-        reasoning: data.reasoning
+        ID: sid,
+        "Track A": data.diagnosis_code,
+        "Track B": data.optimization_path,
+        reasoning: data.expert_reasoning
       };
-    } catch (error) {
-      addLog(`[ERROR] Failed to process ${scenario.ID}: ${error}`);
+    } catch (error: any) {
+      const errorMsg = error?.message || String(error);
+      
+      // If it's a rate limit error and we haven't tried too many times
+      if (errorMsg.includes("429") && attempt <= 3) {
+        const delay = Math.pow(2, attempt) * 2000; // 4s, 8s, 16s
+        addLog(`[QUOTA] Rate limit hit on ${sid.slice(0,8)}. Retrying in ${delay/1000}s...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+        return solveScenario(scenario, attempt + 1);
+      }
+
+      addLog(`[ERROR] Final failure on ${sid.slice(0,8)}: ${errorMsg}`);
       return {
-        ID: scenario.ID,
+        ID: sid,
         "Track A": "C7",
-        "Track B": "N/A",
-        reasoning: "API Error"
+        "Track B": "RETRY_MANUAL",
+        reasoning: `LLM Error: ${errorMsg}`
       };
     }
   };
@@ -172,6 +223,11 @@ export default function App() {
       const result = await solveScenario(scenarios[i]);
       finalResults.push(result);
       setResults([...finalResults]);
+      
+      // Base delay between requests to be gentle on the quota
+      if (i < scenarios.length - 1) {
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
     }
     
     setStatus('completed');
@@ -223,11 +279,32 @@ export default function App() {
         {/* Side Panel: Resources */}
         <aside className="w-64 border-r border-slate-800 bg-slate-900/20 p-4 flex flex-col gap-6 shrink-0 hidden xl:flex">
           <div>
-            <h2 className="text-xs font-bold uppercase text-slate-500 tracking-widest mb-3">Data Assets</h2>
+            <div className="flex justify-between items-center mb-3">
+              <h2 className="text-xs font-bold uppercase text-slate-500 tracking-widest">Data Assets</h2>
+              <button 
+                onClick={() => fileInputRef.current?.click()}
+                className="text-[10px] bg-slate-800 hover:bg-slate-700 text-slate-300 px-2 py-0.5 rounded border border-slate-700 transition-colors"
+                title="Upload test.json"
+              >
+                Upload
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleFileUpload} 
+                accept=".json" 
+                multiple
+                className="hidden" 
+              />
+            </div>
             <ul className="space-y-1">
-              <li className="flex items-center gap-2 p-2 bg-slate-800/50 rounded border border-slate-700/50">
-                <FileJson className="w-3.5 h-3.5 text-blue-400" />
-                <span className="text-xs truncate">test_queries.json</span>
+              <li className={cn(
+                "flex items-center gap-2 p-2 rounded border transition-all",
+                scenarios.length > 0 ? "bg-blue-500/10 border-blue-500/20" : "bg-slate-800/50 border-slate-700/50 opacity-50"
+              )}>
+                <FileJson className={cn("w-3.5 h-3.5", scenarios.length > 0 ? "text-blue-400" : "text-slate-500")} />
+                <span className="text-xs truncate">{scenarios.length > 2 ? 'test.json (Full)' : 'test.json (Sample)'}</span>
+                {scenarios.length > 0 && <span className="ml-auto text-[9px] font-bold text-blue-500">{scenarios.length}</span>}
               </li>
               <li className="flex items-center gap-2 p-2 hover:bg-slate-800/30 rounded cursor-pointer transition-colors">
                 <Database className="w-3.5 h-3.5 text-emerald-400" />
@@ -337,7 +414,7 @@ export default function App() {
                             : "bg-blue-600 text-white hover:bg-blue-500 shadow-lg shadow-blue-600/20"
                          )}
                        >
-                         Initialize Batch
+                         Solve Batch
                        </button>
                     </div>
                   </div>

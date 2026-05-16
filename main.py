@@ -105,26 +105,42 @@ class TelcoAgent:
             return "N/A"
 
 def main():
-    test_file = "test.json"
-    if not os.path.exists(test_file):
-        logger.error(f"File {test_file} not found. Please ensure it is in the same directory.")
-        return
+    import sys
+    input_files = sys.argv[1:] if len(sys.argv) > 1 else ["test.json"]
+    
+    scenarios_map = {}
+    for test_file in input_files:
+        if not os.path.exists(test_file):
+            logger.error(f"File {test_file} not found. Skipping.")
+            continue
 
-    with open(test_file, 'r') as f:
-        data = json.load(f)
+        with open(test_file, 'r') as f:
+            data = json.load(f)
+            if not isinstance(data, list):
+                data = [data]
+            
+            for s in data:
+                sid = s.get("ID") or s.get("scenario_id")
+                if sid in scenarios_map:
+                    scenarios_map[sid].update(s)
+                else:
+                    scenarios_map[sid] = s
+
+    if not scenarios_map:
+        logger.error("No scenarios loaded. Usage: python main.py track_a.json track_b.json")
+        return
 
     agent = TelcoAgent()
     results = []
 
-    for scenario in data:
-        scenario_id = scenario.get("ID") or scenario.get("scenario_id")
-        logger.info(f"Processing Scenario: {scenario_id}")
+    for sid, scenario in scenarios_map.items():
+        logger.info(f"Processing Scenario: {sid}")
         
         track_a_ans = agent.solve_track_a(scenario)
         track_b_ans = agent.solve_track_b(scenario)
         
         results.append({
-            "ID": scenario_id,
+            "ID": sid,
             "Track A": track_a_ans,
             "Track B": track_b_ans
         })
