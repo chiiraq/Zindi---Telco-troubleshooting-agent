@@ -79,9 +79,29 @@ export default function App() {
   const [currentScenarioIndex, setCurrentScenarioIndex] = useState(-1);
   const [logs, setLogs] = useState<string[]>([]);
   const [activeTab, setActiveTab] = useState<'dashboard' | 'agent' | 'visualizer'>('dashboard');
+  const [consoleTab, setConsoleTab] = useState<'trace' | 'scenarios'>('trace');
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const ai = new GoogleGenAI({ apiKey: process.env.GEMINI_API_KEY as string });
+
+  const getScenarioId = (s: any): string => {
+    if (!s) return 'unknown';
+    const val = s.ID ?? s.id ?? s.scenario_id ?? s.Scenario_ID ?? s.ScenarioID ?? s.scenarioId;
+    return val !== undefined && val !== null ? String(val).trim() : 'unknown';
+  };
+
+  const normalizeScenario = (raw: any): Scenario => {
+    const id = getScenarioId(raw);
+    return {
+      ID: id,
+      description: raw.description ?? raw.Scenario_Description ?? raw.scenario_description ?? raw.desc ?? raw.details ?? '',
+      topology: raw.topology ?? raw.network_topology ?? raw.Topology ?? raw.topology_snippet ?? '',
+      alarms: raw.alarms ?? raw.Alarms ?? raw.alarm ?? raw.observed_alarms ?? '',
+      problem: raw.problem ?? raw.Problem ?? raw.target ?? raw.aim ?? '',
+      nodes: Array.isArray(raw.nodes) ? raw.nodes : (raw.Nodes ? (Array.isArray(raw.Nodes) ? raw.Nodes : [raw.Nodes]) : (raw.involved_nodes ? (Array.isArray(raw.involved_nodes) ? raw.involved_nodes : [raw.involved_nodes]) : [])),
+      status: raw.status ?? raw.Status ?? raw.current_status ?? ''
+    };
+  };
 
   // Initial load
   useEffect(() => {
@@ -89,7 +109,7 @@ export default function App() {
       .then(res => res.json())
       .then(data => {
         const formatted = Array.isArray(data) ? data : [data];
-        setScenarios(formatted);
+        setScenarios(formatted.map(normalizeScenario));
       })
       .catch(() => setScenarios([]));
   }, []);
@@ -97,8 +117,6 @@ export default function App() {
   const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
-
-    let allScenarios: Scenario[] = [...scenarios];
 
     Array.from(files).forEach((file: any) => {
       const reader = new FileReader();
@@ -110,15 +128,27 @@ export default function App() {
           setScenarios(prev => {
             const newBatch = [...prev];
             data.forEach((newS: any) => {
-              const id = newS.ID || newS.scenario_id;
-              const index = newBatch.findIndex(s => (s.ID || s.scenario_id) === id);
+              const id = getScenarioId(newS);
+              const normalized = normalizeScenario(newS);
+              
+              const index = newBatch.findIndex(s => s.ID === id);
               if (index > -1) {
-                newBatch[index] = { ...newBatch[index], ...newS };
+                // Merge properties to support hydration from both Track A and Track B files
+                const existing = newBatch[index];
+                newBatch[index] = {
+                  ID: id,
+                  description: normalized.description || existing.description,
+                  topology: normalized.topology || existing.topology,
+                  alarms: normalized.alarms || existing.alarms,
+                  problem: normalized.problem || existing.problem,
+                  nodes: normalized.nodes.length > 0 ? normalized.nodes : existing.nodes,
+                  status: normalized.status || existing.status
+                };
               } else {
-                newBatch.push(newS);
+                newBatch.push(normalized);
               }
             });
-            return Array.from(new Map(newBatch.map(s => [s.ID || s.scenario_id, s])).values());
+            return Array.from(new Map(newBatch.map(s => [s.ID, s])).values());
           });
 
           addLog(`Imported ${data.length} entries from ${file.name}.`);
@@ -137,8 +167,8 @@ export default function App() {
   };
 
   const solveScenario = async (scenario: Scenario, attempt = 1): Promise<Result> => {
-    const sid = scenario.ID || scenario.scenario_id;
-    if (!sid) return { ID: 'unknown', "Track A": "C7", "Track B": "N/A", reasoning: "Missing ID" };
+    const sid = scenario.ID;
+    if (!sid || sid === 'unknown') return { ID: 'unknown', "Track A": "C7", "Track B": "N/A", reasoning: "Missing ID" };
 
     if (attempt === 1) addLog(`Reasoning for ${sid.slice(0,8)}...`);
     
@@ -421,22 +451,92 @@ export default function App() {
 
                   <div className="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-6 min-h-0">
                     <div className="flex flex-col gap-3 min-h-0">
-                       <h4 className="text-[10px] uppercase tracking-widest text-slate-500 font-bold px-1">Agent Trace Console</h4>
-                       <div className="flex-1 bg-black rounded-xl p-4 font-mono text-[11px] leading-relaxed overflow-y-auto border border-slate-800">
-                          {logs.map((log, i) => (
-                            <div key={i} className={cn(
-                              "mb-1.5 opacity-80",
-                              log.includes("[GEMINI]") ? "text-blue-400" : 
-                              log.includes("[ERROR]") ? "text-red-400" : "text-slate-400"
-                            )}>
-                              {log.includes("[GEMINI]") ? "> " : ""}{log}
-                            </div>
-                          ))}
-                          {status === 'running' && (
-                            <div className="text-blue-500 animate-pulse mt-2">_ Executing diagnostic...</div>
-                          )}
-                          {logs.length === 0 && <div className="text-slate-700 italic">// Ready for session initialization</div>}
+                       <div className="flex justify-between items-center px-1 shrink-0">
+                         <h4 className="text-[10px] uppercase tracking-widest text-slate-500 font-bold">
+                           Inspection Hub
+                         </h4>
+                         <div className="flex gap-1.5 bg-slate-900 border border-slate-800 p-0.5 rounded-md">
+                           <button 
+                             onClick={() => setConsoleTab('trace')}
+                             className={cn(
+                               "px-2 py-0.5 text-[9px] rounded-sm font-semibold transition-all",
+                               consoleTab === 'trace' ? "bg-slate-800 text-white" : "text-slate-500 hover:text-slate-300"
+                             )}
+                           >
+                             Console Trace
+                           </button>
+                           <button 
+                             onClick={() => setConsoleTab('scenarios')}
+                             className={cn(
+                               "px-2 py-0.5 text-[9px] rounded-sm font-semibold transition-all",
+                               consoleTab === 'scenarios' ? "bg-slate-800 text-white" : "text-slate-400 hover:text-slate-300"
+                             )}
+                           >
+                             Source Scenarios ({scenarios.length})
+                           </button>
+                         </div>
                        </div>
+                       
+                       {consoleTab === 'trace' ? (
+                         <div className="flex-1 bg-black rounded-xl p-4 font-mono text-[11px] leading-relaxed overflow-y-auto border border-slate-800">
+                           {logs.map((log, i) => (
+                             <div key={i} className={cn(
+                               "mb-1.5 opacity-80",
+                               log.includes("[GEMINI]") ? "text-blue-400" : 
+                               log.includes("[ERROR]") ? "text-red-400" : "text-slate-400"
+                             )}>
+                               {log.includes("[GEMINI]") ? "> " : ""}{log}
+                             </div>
+                           ))}
+                           {status === 'running' && (
+                             <div className="text-blue-500 animate-pulse mt-2">_ Executing diagnostic...</div>
+                           )}
+                           {logs.length === 0 && <div className="text-slate-700 italic">// Ready for session initialization</div>}
+                         </div>
+                       ) : (
+                         <div className="flex-1 bg-slate-900/10 rounded-xl p-4 overflow-y-auto border border-slate-800 space-y-3">
+                           {scenarios.map((sc, i) => (
+                             <div key={i} className="p-3 bg-slate-950 rounded-lg border border-slate-800/80 hover:border-slate-700 transition-colors text-xs space-y-2">
+                               <div className="flex justify-between items-center pb-2 border-b border-slate-900">
+                                 <span className="font-mono text-blue-400 font-bold">{sc.ID.slice(0, 12)}...</span>
+                                 <div className="flex gap-1.5 text-[9px]">
+                                   {sc.description && <span className="bg-blue-500/10 text-blue-400 px-1 py-0.5 rounded border border-blue-500/20">Track A Data</span>}
+                                   {sc.problem && <span className="bg-purple-500/10 text-purple-400 px-1 py-0.5 rounded border border-purple-500/20">Track B Data</span>}
+                                 </div>
+                               </div>
+                               {sc.description && (
+                                 <div className="text-slate-300 leading-tight">
+                                   <strong className="text-slate-500">Desc:</strong> {sc.description}
+                                 </div>
+                               )}
+                               {sc.topology && (
+                                 <div className="text-slate-400 font-mono text-[10px] bg-black/45 p-1.5 rounded border border-slate-900">
+                                   <strong className="text-slate-600 block text-[9px] uppercase font-sans">Topology SNIPPET:</strong>
+                                   {sc.topology}
+                                 </div>
+                               )}
+                               {sc.alarms && (
+                                 <div className="text-amber-300/95 text-[10px] italic">
+                                   <strong className="text-slate-500 font-sans not-italic">Alarms:</strong> {sc.alarms}
+                                 </div>
+                               )}
+                               {sc.problem && (
+                                 <div className="text-purple-300 leading-tight">
+                                   <strong className="text-slate-500">Problem (B):</strong> {sc.problem}
+                                 </div>
+                               )}
+                               {sc.nodes && sc.nodes.length > 0 && (
+                                 <div className="text-slate-400 text-[10px]">
+                                   <strong className="text-slate-500">Nodes (B):</strong> {sc.nodes.join(' -> ')}
+                                 </div>
+                               )}
+                             </div>
+                           ))}
+                           {scenarios.length === 0 && (
+                             <div className="text-center text-slate-700 italic py-8 text-xs">No scenarios imported yet</div>
+                           )}
+                         </div>
+                       )}
                     </div>
 
                     <div className="flex flex-col gap-3 min-h-0">
